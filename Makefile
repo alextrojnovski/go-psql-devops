@@ -1,20 +1,16 @@
-.PHONY: test build docker-up docker-down clean
+.PHONY: up down logs ps clean
 
-test:
-	go test -v ./...
-
-build:
-	go build -o main .
-
-docker-up:
+up:
 	docker-compose up -d
 
-docker-down:
+down:
 	docker-compose down
+
+logs:
+	docker-compose logs -f
+
+ps:
+	docker-compose ps
 
 clean:
 	docker-compose down -v
-	rm -f main
-
-ci-local: test build
-	@echo "✅ CI checks passed locally!"
