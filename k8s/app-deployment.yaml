@@ -27,6 +27,8 @@ spec:
           value: postgres
         - name: DB_NAME
           value: appdb
+        - name: APP_VERSION
+          value: "v1.0.0"
         ports:
         - containerPort: 8080
 ---

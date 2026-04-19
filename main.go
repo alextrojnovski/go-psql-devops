@@ -121,7 +121,7 @@ func main() {
 	http.HandleFunc("/health", metricsMiddleware(healthHandler))
 	http.HandleFunc("/status", metricsMiddleware(statusHandler))
 	http.HandleFunc("/ping-db", metricsMiddleware(dbPingHandler))
-
+        http.HandleFunc("/version", metricsMiddleware(versionHandler))
 	http.Handle("/metrics", promhttp.Handler())
 
 	log.Fatal(http.ListenAndServe(":8080", nil))
@@ -132,6 +132,16 @@ func getEnv(key, fallback string) string {
 		return val
 	}
 	return fallback
+}
+
+func versionHandler(w http.ResponseWriter, r *http.Request) {
+    version := os.Getenv("APP_VERSION")
+    if version == "" {
+        version = "dev"
+    }
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(http.StatusOK)
+    json.NewEncoder(w).Encode(map[string]string{"version": version})
 }
 
 func createTable() {
