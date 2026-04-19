@@ -27,3 +27,4 @@ coverage.out
 
 *.log
 logs/
+actions-runner/

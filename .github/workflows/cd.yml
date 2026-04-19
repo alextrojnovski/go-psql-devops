@@ -1,0 +1,31 @@
+name: CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run tests
+        run: go test -v ./...
+
+      - name: Build Docker image
+        run: docker build -t go-app:latest .
+
+      - name: Load image into Minikube
+        run: minikube image load go-app:latest
+
+      - name: Apply Kubernetes manifests
+        run: kubectl apply -f k8s/
+
+      - name: Restart app deployment
+        run: kubectl rollout restart deployment go-app
+
+      - name: Wait for rollout
+        run: kubectl rollout status deployment go-app --timeout=60s
