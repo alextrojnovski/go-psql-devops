@@ -11,6 +11,9 @@ import (
 
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type StatusResponse struct {
@@ -25,6 +28,37 @@ var (
 	db           *sql.DB
 	requestCount int64
 	startTime    time.Time
+
+	totalRequests = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "go_app_http_requests_total",
+			Help: "Total number of HTTP requests received by the application.",
+		},
+		[]string{"method", "endpoint"},
+	)
+
+	requestDuration = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "go_app_http_request_duration_seconds",
+			Help:    "Duration of HTTP requests in seconds.",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"method", "endpoint"},
+	)
+
+	dbErrorCount = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "go_app_db_errors_total",
+			Help: "Total number of database ping errors.",
+		},
+	)
+
+	dbUpStatus = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "go_app_db_up",
+			Help: "Shows whether the database is up (1) or down (0).",
+		},
+	)
 )
 
 func main() {
@@ -42,7 +76,7 @@ func main() {
 	var err error
 	db, err = sql.Open("postgres", connStr)
 	if err != nil {
-		log.Fatal("❌ DB open error:", err)
+		log.Fatal("DB open error:", err)
 	}
 
 	for i := 0; i < 5; i++ {
@@ -50,21 +84,45 @@ func main() {
 		if err == nil {
 			break
 		}
-		log.Printf("⏳ Waiting for DB (%d/5): %v", i+1, err)
+		log.Printf(" Waiting for DB (%d/5): %v", i+1, err)
 		time.Sleep(2 * time.Second)
 	}
 	if err != nil {
-		log.Fatal("❌ DB ping failed:", err)
+		log.Println(" Running WITHOUT database connection (ping failed)")
+	} else {
+		createTable()
 	}
 
-	createTable()
-
 	startTime = time.Now()
-	log.Println("✅ Server started on :8080")
+	log.Println(" Server started on :8080")
+	go func() {
+		for {
+			isDBUp := db != nil && db.Ping() == nil
+			if isDBUp {
+				dbUpStatus.Set(1)
+			} else {
+				dbUpStatus.Set(0)
+				dbErrorCount.Inc()
+			}
+			time.Sleep(10 * time.Second)
+		}
+	}()
 
-	http.HandleFunc("/health", healthHandler)
-	http.HandleFunc("/status", statusHandler)
-	http.HandleFunc("/ping-db", dbPingHandler)
+	metricsMiddleware := func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			totalRequests.WithLabelValues(r.Method, r.URL.Path).Inc()
+			next(w, r)
+			duration := time.Since(start).Seconds()
+			requestDuration.WithLabelValues(r.Method, r.URL.Path).Observe(duration)
+		}
+	}
+
+	http.HandleFunc("/health", metricsMiddleware(healthHandler))
+	http.HandleFunc("/status", metricsMiddleware(statusHandler))
+	http.HandleFunc("/ping-db", metricsMiddleware(dbPingHandler))
+
+	http.Handle("/metrics", promhttp.Handler())
 
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
@@ -78,12 +136,12 @@ func getEnv(key, fallback string) string {
 
 func createTable() {
 	query := `CREATE TABLE IF NOT EXISTS requests_log (
-        id SERIAL PRIMARY KEY,
-        created_at TIMESTAMP DEFAULT NOW()
-    );`
+		id SERIAL PRIMARY KEY,
+		created_at TIMESTAMP DEFAULT NOW()
+	);`
 	_, err := db.Exec(query)
 	if err != nil {
-		log.Printf("⚠️ Table creation warning: %v", err)
+		log.Printf(" Table creation warning: %v", err)
 	}
 }
 
@@ -113,6 +171,7 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 		RequestCount: requestCount,
 		Time:         time.Now().Format(time.RFC3339),
 	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(resp)
@@ -133,7 +192,7 @@ func dbPingHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var count int
-	db.QueryRow("SELECT COUNT(*) FROM requests_log").Scan(&count)
+	_ = db.QueryRow("SELECT COUNT(*) FROM requests_log").Scan(&count)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{

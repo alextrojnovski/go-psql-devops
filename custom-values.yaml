@@ -1,0 +1,17 @@
+# custom-values.yaml
+# Настраиваем Prometheus на сбор метрик с нашего приложения
+prometheus:
+  prometheusSpec:
+    serviceMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelector:
+      matchLabels:
+        app: go-app # Будем искать ServiceMonitor с этой меткой
+    serviceMonitorNamespaceSelector: {} # Искать во всех namespace
+
+# Настраиваем Grafana
+grafana:
+  adminPassword: admin # Установим пароль для администратора
+  service:
+    type: NodePort
+    port: 3000
+    nodePort: 30300 # Сделаем Grafana доступной на порту 30300 вашего компьютера
